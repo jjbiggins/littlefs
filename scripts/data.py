@@ -20,23 +20,31 @@ OBJ_PATHS = ['*.o']
 def collect(paths, **args):
     results = co.defaultdict(lambda: 0)
     pattern = re.compile(
-        '^(?P<size>[0-9a-fA-F]+)' +
-        ' (?P<type>[%s])' % re.escape(args['type']) +
-        ' (?P<func>.+?)$')
+        (
+            (
+                '^(?P<size>[0-9a-fA-F]+)'
+                + f" (?P<type>[{re.escape(args['type'])}])"
+            )
+            + ' (?P<func>.+?)$'
+        )
+    )
+
     for path in paths:
         # note nm-tool may contain extra args
         cmd = args['nm_tool'] + ['--size-sort', path]
         if args.get('verbose'):
             print(' '.join(shlex.quote(c) for c in cmd))
-        proc = sp.Popen(cmd,
+        proc = sp.Popen(
+            cmd,
             stdout=sp.PIPE,
-            stderr=sp.PIPE if not args.get('verbose') else None,
+            stderr=None if args.get('verbose') else sp.PIPE,
             universal_newlines=True,
-            errors='replace')
+            errors='replace',
+        )
+
         for line in proc.stdout:
-            m = pattern.match(line)
-            if m:
-                results[(path, m.group('func'))] += int(m.group('size'), 16)
+            if m := pattern.match(line):
+                results[path, m['func']] += int(m['size'], 16)
         proc.wait()
         if proc.returncode != 0:
             if not args.get('verbose'):
@@ -48,14 +56,13 @@ def collect(paths, **args):
     for (file, func), size in results.items():
         # map to source files
         if args.get('build_dir'):
-            file = re.sub('%s/*' % re.escape(args['build_dir']), '', file)
+            file = re.sub(f"{re.escape(args['build_dir'])}/*", '', file)
         # replace .o with .c, different scripts report .o/.c, we need to
         # choose one if we want to deduplicate csv files
         file = re.sub('\.o$', '.c', file)
         # discard internal functions
-        if not args.get('everything'):
-            if func.startswith('__'):
-                continue
+        if not args.get('everything') and func.startswith('__'):
+            continue
         # discard .8449 suffixes created by optimizer
         func = re.sub('\.[0-9]+', '', func)
         flat_results.append((file, func, size))
@@ -64,13 +71,12 @@ def collect(paths, **args):
 
 def main(**args):
     def openio(path, mode='r'):
-        if path == '-':
-            if 'r' in mode:
-                return os.fdopen(os.dup(sys.stdin.fileno()), 'r')
-            else:
-                return os.fdopen(os.dup(sys.stdout.fileno()), 'w')
-        else:
+        if path != '-':
             return open(path, mode)
+        if 'r' in mode:
+            return os.fdopen(os.dup(sys.stdin.fileno()), 'r')
+        else:
+            return os.fdopen(os.dup(sys.stdout.fileno()), 'w')
 
     # find sizes
     if not args.get('use', None):
@@ -219,9 +225,14 @@ def main(**args):
         if not args.get('diff'):
             print_entry('TOTAL', total)
         else:
-            ratio = (0.0 if not prev_total and not total
-                else 1.0 if not prev_total
-                else (total-prev_total)/prev_total)
+            ratio = (
+                0.0
+                if not prev_total and not total
+                else (total - prev_total) / prev_total
+                if prev_total
+                else 1.0
+            )
+
             print_diff_entry('TOTAL',
                 prev_total, total,
                 total-prev_total,

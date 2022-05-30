@@ -32,14 +32,14 @@ def collect(paths, **args):
                 rest = rest.lstrip()
                 if rest.startswith('{'):
                     v, rest = parse_vcg(rest[1:])
-                    assert rest[0] == '}', "unexpected %r" % rest[0:1]
+                    assert rest[0] == '}', "unexpected %r" % rest[:1]
                     rest = rest[1:]
-                    node.append((k, v))
                 else:
                     m = v_pattern.match(rest)
-                    assert m, "unexpected %r" % rest[0:1]
+                    assert m, "unexpected %r" % rest[:1]
                     v, rest = m.group(1) or m.group(2), rest[m.end(0):]
-                    node.append((k, v))
+
+                node.append((k, v))
 
         node, rest = parse_vcg(rest)
         assert rest == '', "unexpected %r" % rest[0:1]
@@ -117,13 +117,12 @@ def collect(paths, **args):
 
 def main(**args):
     def openio(path, mode='r'):
-        if path == '-':
-            if 'r' in mode:
-                return os.fdopen(os.dup(sys.stdin.fileno()), 'r')
-            else:
-                return os.fdopen(os.dup(sys.stdout.fileno()), 'w')
-        else:
+        if path != '-':
             return open(path, mode)
+        if 'r' in mode:
+            return os.fdopen(os.dup(sys.stdin.fileno()), 'r')
+        else:
+            return os.fdopen(os.dup(sys.stdout.fileno()), 'w')
 
     # find sizes
     if not args.get('use', None):
@@ -238,18 +237,28 @@ def main(**args):
         for name, (old_frame, old_limit, _) in olds.items():
             _, _, new_frame, new_limit, _, _, _, deps = diff[name]
             diff[name] = (
-                old_frame, old_limit,
-                new_frame, new_limit,
+                old_frame,
+                old_limit,
+                new_frame,
+                new_limit,
                 (new_frame or 0) - (old_frame or 0),
-                0 if m.isinf(new_limit or 0) and m.isinf(old_limit or 0)
-                    else (new_limit or 0) - (old_limit or 0),
-                0.0 if m.isinf(new_limit or 0) and m.isinf(old_limit or 0)
-                    else +float('inf') if m.isinf(new_limit or 0)
-                    else -float('inf') if m.isinf(old_limit or 0)
-                    else +0.0 if not old_limit and not new_limit
-                    else +1.0 if not old_limit
-                    else ((new_limit or 0) - (old_limit or 0))/(old_limit or 0),
-                deps)
+                0
+                if m.isinf(new_limit or 0) and m.isinf(old_limit or 0)
+                else (new_limit or 0) - (old_limit or 0),
+                0.0
+                if m.isinf(new_limit or 0) and m.isinf(old_limit or 0)
+                else +float('inf')
+                if m.isinf(new_limit or 0)
+                else -float('inf')
+                if m.isinf(old_limit or 0)
+                else +0.0
+                if not old_limit and not new_limit
+                else ((new_limit or 0) - (old_limit or 0)) / (old_limit or 0)
+                if old_limit
+                else +1.0,
+                deps,
+            )
+
         return diff
 
     def sorted_entries(entries):
@@ -291,21 +300,37 @@ def main(**args):
             new_frame, new_limit,
             diff_frame, diff_limit,
             ratio):
-        print('%-36s %7s %7s %7s %7s %+7d %7s%s' % (name,
-            old_frame if old_frame is not None else "-",
-            ('∞' if m.isinf(old_limit) else int(old_limit))
-                if old_limit is not None else "-",
-            new_frame if new_frame is not None else "-",
-            ('∞' if m.isinf(new_limit) else int(new_limit))
-                if new_limit is not None else "-",
-            diff_frame,
-            ('+∞' if diff_limit > 0 and m.isinf(diff_limit)
-                else '-∞' if diff_limit < 0 and m.isinf(diff_limit)
-                else '%+d' % diff_limit),
-            '' if not ratio
-                else ' (+∞%)' if ratio > 0 and m.isinf(ratio)
-                else ' (-∞%)' if ratio < 0 and m.isinf(ratio)
-                else ' (%+.1f%%)' % (100*ratio)))
+        print(
+            (
+                '%-36s %7s %7s %7s %7s %+7d %7s%s'
+                % (
+                    name,
+                    old_frame if old_frame is not None else "-",
+                    ('∞' if m.isinf(old_limit) else int(old_limit))
+                    if old_limit is not None
+                    else "-",
+                    new_frame if new_frame is not None else "-",
+                    ('∞' if m.isinf(new_limit) else int(new_limit))
+                    if new_limit is not None
+                    else "-",
+                    diff_frame,
+                    '+∞'
+                    if diff_limit > 0 and m.isinf(diff_limit)
+                    else '-∞'
+                    if diff_limit < 0 and m.isinf(diff_limit)
+                    else '%+d' % diff_limit,
+                    (
+                        ' (+∞%)'
+                        if ratio > 0 and m.isinf(ratio)
+                        else ' (-∞%)'
+                        if ratio < 0 and m.isinf(ratio)
+                        else ' (%+.1f%%)' % (100 * ratio)
+                    )
+                    if ratio
+                    else '',
+                )
+            )
+        )
 
     def print_entries(by='name'):
         # build optional tree of dependencies
@@ -322,12 +347,18 @@ def main(**args):
 
                 if depth > 0:
                     deps = entry[-1]
-                    print_deps(entries, depth-1, print,
+                    print_deps(
+                        entries,
+                        depth - 1,
+                        print,
                         lambda name: name in deps,
-                        (   prefixes[2+last] + "|-> ",
-                            prefixes[2+last] + "'-> ",
-                            prefixes[2+last] + "|   ",
-                            prefixes[2+last] + "    "))
+                        (
+                            f"{prefixes[2+last]}|-> ",
+                            prefixes[2 + last] + "'-> ",
+                            f"{prefixes[2+last]}|   ",
+                            f"{prefixes[2+last]}    ",
+                        ),
+                    )
 
         entries = dedup_entries(results, by=by)
 
@@ -360,12 +391,20 @@ def main(**args):
                 0 if m.isinf(total_limit or 0) and m.isinf(prev_total_limit or 0)
                     else (total_limit or 0) - (prev_total_limit or 0))
             ratio = (
-                0.0 if m.isinf(total_limit or 0) and m.isinf(prev_total_limit or 0)
-                    else +float('inf') if m.isinf(total_limit or 0)
-                    else -float('inf') if m.isinf(prev_total_limit or 0)
-                    else 0.0 if not prev_total_limit and not total_limit
-                    else 1.0 if not prev_total_limit
-                    else ((total_limit or 0) - (prev_total_limit or 0))/(prev_total_limit or 0))
+                0.0
+                if m.isinf(total_limit or 0) and m.isinf(prev_total_limit or 0)
+                else +float('inf')
+                if m.isinf(total_limit or 0)
+                else -float('inf')
+                if m.isinf(prev_total_limit or 0)
+                else 0.0
+                if not prev_total_limit and not total_limit
+                else ((total_limit or 0) - (prev_total_limit or 0))
+                / (prev_total_limit or 0)
+                if prev_total_limit
+                else 1.0
+            )
+
             print_diff_entry('TOTAL',
                 prev_total_frame, prev_total_limit,
                 total_frame, total_limit,

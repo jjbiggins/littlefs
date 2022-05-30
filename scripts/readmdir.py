@@ -31,11 +31,7 @@ class Tag:
         if len(args) == 1:
             self.tag = args[0]
         elif len(args) == 3:
-            if isinstance(args[0], str):
-                type = TAG_TYPES[args[0]][1]
-            else:
-                type = args[0]
-
+            type = TAG_TYPES[args[0]][1] if isinstance(args[0], str) else args[0]
             if isinstance(args[1], str):
                 id = int(args[1], 0) if args[1] not in 'x.' else 0x3ff
             else:
@@ -128,8 +124,7 @@ class Tag:
                         type, prefix//4, self.type & ((1 << prefix)-1))
                 else:
                     return type
-        else:
-            return '%02x' % self.type
+        return '%02x' % self.type
 
     def idrepr(self):
         return repr(self.id) if self.id != 0x3ff else '.'
@@ -170,8 +165,8 @@ class MetadataPair:
         self.data = blocks[0]
         block = self.data
 
-        self.rev, = struct.unpack('<I', block[0:4])
-        crc = binascii.crc32(block[0:4])
+        self.rev, = struct.unpack('<I', block[:4])
+        crc = binascii.crc32(block[:4])
 
         # parse tags
         corrupt = False
@@ -233,11 +228,11 @@ class MetadataPair:
 
     def __lt__(self, other):
         # corrupt blocks don't count
-        if not self or not other:
-            return bool(other)
-
-        # use sequence arithmetic to avoid overflow
-        return not ((other.rev - self.rev) & 0x80000000)
+        return (
+            not ((other.rev - self.rev) & 0x80000000)
+            if self and other
+            else bool(other)
+        )
 
     def __contains__(self, args):
         try:
@@ -247,11 +242,7 @@ class MetadataPair:
             return False
 
     def __getitem__(self, args):
-        if isinstance(args, tuple):
-            gmask, gtag = args
-        else:
-            gmask, gtag = args.mkmask(), args
-
+        gmask, gtag = args if isinstance(args, tuple) else (args.mkmask(), args)
         gdiff = 0
         for tag in reversed(self.log):
             if (gmask.id != 0 and tag.is_('splice') and
@@ -326,16 +317,27 @@ def main(args):
     except KeyError:
         mdir.tail = None
 
-    print("mdir {%s} rev %d%s%s%s" % (
-        ', '.join('%#x' % b
-            for b in [args.block1, args.block2]
-            if b is not None),
-        mdir.rev,
-        ' (was %s)' % ', '.join('%d' % m.rev for m in mdir.pair[1:])
-        if len(mdir.pair) > 1 else '',
-        ' (corrupted!)' if not mdir else '',
-        ' -> {%#x, %#x}' % struct.unpack('<II', mdir.tail.data)
-        if mdir.tail else ''))
+    print(
+        (
+            "mdir {%s} rev %d%s%s%s"
+            % (
+                ', '.join(
+                    '%#x' % b
+                    for b in [args.block1, args.block2]
+                    if b is not None
+                ),
+                mdir.rev,
+                f" (was {', '.join(('%d' % m.rev for m in mdir.pair[1:]))})"
+                if len(mdir.pair) > 1
+                else '',
+                '' if mdir else ' (corrupted!)',
+                ' -> {%#x, %#x}' % struct.unpack('<II', mdir.tail.data)
+                if mdir.tail
+                else '',
+            )
+        )
+    )
+
     if args.all:
         mdir.dump_all(truncate=not args.no_truncate)
     elif args.log:

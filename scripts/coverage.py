@@ -37,10 +37,7 @@ def collect(paths, **args):
     funcs.sort()
     def func_from_lineno(file, lineno):
         i = b.bisect(funcs, (file, lineno))
-        if i and funcs[i-1][0] == file:
-            return funcs[i-1][2]
-        else:
-            return None
+        return funcs[i-1][2] if i and funcs[i-1][0] == file else None
 
     # reduce to function info
     reduced_funcs = co.defaultdict(lambda: (0, 0))
@@ -67,13 +64,12 @@ def collect(paths, **args):
 
 def main(**args):
     def openio(path, mode='r'):
-        if path == '-':
-            if 'r' in mode:
-                return os.fdopen(os.dup(sys.stdin.fileno()), 'r')
-            else:
-                return os.fdopen(os.dup(sys.stdout.fileno()), 'w')
-        else:
+        if path != '-':
             return open(path, mode)
+        if 'r' in mode:
+            return os.fdopen(os.dup(sys.stdin.fileno()), 'r')
+        else:
+            return os.fdopen(os.dup(sys.stdout.fileno()), 'w')
 
     # find coverage
     if not args.get('use'):
