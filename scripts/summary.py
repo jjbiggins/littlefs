@@ -59,13 +59,12 @@ FIELDS = [
 
 def main(**args):
     def openio(path, mode='r'):
-        if path == '-':
-            if 'r' in mode:
-                return os.fdopen(os.dup(sys.stdin.fileno()), 'r')
-            else:
-                return os.fdopen(os.dup(sys.stdout.fileno()), 'w')
-        else:
+        if path != '-':
             return open(path, mode)
+        if 'r' in mode:
+            return os.fdopen(os.dup(sys.stdin.fileno()), 'r')
+        else:
+            return os.fdopen(os.dup(sys.stdout.fileno()), 'w')
 
     # find results
     results = co.defaultdict(lambda: {})
@@ -174,23 +173,23 @@ def main(**args):
         if not args.get('diff'):
             print('%-36s' % by, end='')
             for field in fields:
-                print((' '+field.fmt) % field.name, end='')
-            print()
+                print(f' {field.fmt}' % field.name, end='')
         else:
             print('%-36s' % by, end='')
             for field in fields:
-                print((' '+field.fmt) % field.name, end='')
+                print(f' {field.fmt}' % field.name, end='')
                 print(' %-9s' % '', end='')
-            print()
+
+        print()
 
     def print_entry(name, result):
         print('%-36s' % name, end='')
         for field in fields:
             r = result.get(field.name)
             if r is not None:
-                print((' '+field.fmt) % field.repr(r), end='')
+                print(f' {field.fmt}' % field.repr(r), end='')
             else:
-                print((' '+field.fmt) % '-', end='')
+                print(f' {field.fmt}' % '-', end='')
         print()
 
     def print_diff_entry(name, old, new):
@@ -198,23 +197,42 @@ def main(**args):
         for field in fields:
             n = new.get(field.name)
             if n is not None:
-                print((' '+field.fmt) % field.repr(n), end='')
+                print(f' {field.fmt}' % field.repr(n), end='')
             else:
-                print((' '+field.fmt) % '-', end='')
+                print(f' {field.fmt}' % '-', end='')
             o = old.get(field.name)
             ratio = (
-                0.0 if m.isinf(o or 0) and m.isinf(n or 0)
-                    else +float('inf') if m.isinf(n or 0)
-                    else -float('inf') if m.isinf(o or 0)
-                    else 0.0 if not o and not n
-                    else +1.0 if not o
-                    else -1.0 if not n
-                    else field.ratio(o, n))
-            print(' %-9s' % (
-                '' if not ratio
-                    else '(+∞%)' if ratio > 0 and m.isinf(ratio)
-                    else '(-∞%)' if ratio < 0 and m.isinf(ratio)
-                    else '(%+.1f%%)' % (100*ratio)), end='')
+                0.0
+                if m.isinf(o or 0) and m.isinf(n or 0)
+                else +float('inf')
+                if m.isinf(n or 0)
+                else -float('inf')
+                if m.isinf(o or 0)
+                else 0.0
+                if not o and not n
+                else (field.ratio(o, n) if n else -1.0)
+                if o
+                else +1.0
+            )
+
+            print(
+                (
+                    ' %-9s'
+                    % (
+                        (
+                            '(+∞%)'
+                            if ratio > 0 and m.isinf(ratio)
+                            else '(-∞%)'
+                            if ratio < 0 and m.isinf(ratio)
+                            else '(%+.1f%%)' % (100 * ratio)
+                        )
+                        if ratio
+                        else ''
+                    )
+                ),
+                end='',
+            )
+
         print()
 
     def print_entries(by='name'):
@@ -226,9 +244,17 @@ def main(**args):
                 print_entry(name, result)
         else:
             prev_entries = dedup_entries(prev_results, by=by)
-            print_header(by='%s (%d added, %d removed)' % (by,
-                sum(1 for name in entries if name not in prev_entries),
-                sum(1 for name in prev_entries if name not in entries)))
+            print_header(
+                by=(
+                    '%s (%d added, %d removed)'
+                    % (
+                        by,
+                        sum(name not in prev_entries for name in entries),
+                        sum(name not in entries for name in prev_entries),
+                    )
+                )
+            )
+
             for name, result in sorted_entries(entries.items()):
                 if args.get('all') or result != prev_entries.get(name, {}):
                     print_diff_entry(name, prev_entries.get(name, {}), result)

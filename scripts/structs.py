@@ -35,16 +35,17 @@ def collect(paths, **args):
         cmd = args['objdump_tool'] + ['--dwarf=rawline', path]
         if args.get('verbose'):
             print(' '.join(shlex.quote(c) for c in cmd))
-        proc = sp.Popen(cmd,
+        proc = sp.Popen(
+            cmd,
             stdout=sp.PIPE,
-            stderr=sp.PIPE if not args.get('verbose') else None,
+            stderr=None if args.get('verbose') else sp.PIPE,
             universal_newlines=True,
-            errors='replace')
+            errors='replace',
+        )
+
         for line in proc.stdout:
-            # find file numbers
-            m = decl_pattern.match(line)
-            if m:
-                decls[int(m.group('no'))] = m.group('file')
+            if m := decl_pattern.match(line):
+                decls[int(m['no'])] = m['file']
         proc.wait()
         if proc.returncode != 0:
             if not args.get('verbose'):
@@ -62,31 +63,32 @@ def collect(paths, **args):
         cmd = args['objdump_tool'] + ['--dwarf=info', path]
         if args.get('verbose'):
             print(' '.join(shlex.quote(c) for c in cmd))
-        proc = sp.Popen(cmd,
+        proc = sp.Popen(
+            cmd,
             stdout=sp.PIPE,
-            stderr=sp.PIPE if not args.get('verbose') else None,
+            stderr=None if args.get('verbose') else sp.PIPE,
             universal_newlines=True,
-            errors='replace')
+            errors='replace',
+        )
+
         for line in proc.stdout:
-            # state machine here to find structs
-            m = struct_pattern.match(line)
-            if m:
-                if m.group('tag'):
+            if m := struct_pattern.match(line):
+                if m['tag']:
                     if (name is not None
                             and decl is not None
                             and size is not None):
                         decl = decls.get(decl, '?')
                         results[(decl, name)] = size
-                    found = (m.group('tag') == 'structure_type')
+                    found = m['tag'] == 'structure_type'
                     name = None
                     decl = None
                     size = None
-                elif found and m.group('name'):
-                    name = m.group('name')
-                elif found and name and m.group('decl'):
-                    decl = int(m.group('decl'))
-                elif found and name and m.group('size'):
-                    size = int(m.group('size'))
+                elif found and m['name']:
+                    name = m['name']
+                elif found and name and m['decl']:
+                    decl = int(m['decl'])
+                elif found and name and m['size']:
+                    size = int(m['size'])
         proc.wait()
         if proc.returncode != 0:
             if not args.get('verbose'):
@@ -98,13 +100,12 @@ def collect(paths, **args):
     for (file, struct), size in results.items():
         # map to source files
         if args.get('build_dir'):
-            file = re.sub('%s/*' % re.escape(args['build_dir']), '', file)
+            file = re.sub(f"{re.escape(args['build_dir'])}/*", '', file)
         # only include structs declared in header files in the current
         # directory, ignore internal-only # structs (these are represented
         # in other measurements)
-        if not args.get('everything'):
-            if not file.endswith('.h'):
-                continue
+        if not args.get('everything') and not file.endswith('.h'):
+            continue
         # replace .o with .c, different scripts report .o/.c, we need to
         # choose one if we want to deduplicate csv files
         file = re.sub('\.o$', '.c', file)
@@ -116,13 +117,12 @@ def collect(paths, **args):
 
 def main(**args):
     def openio(path, mode='r'):
-        if path == '-':
-            if 'r' in mode:
-                return os.fdopen(os.dup(sys.stdin.fileno()), 'r')
-            else:
-                return os.fdopen(os.dup(sys.stdout.fileno()), 'w')
-        else:
+        if path != '-':
             return open(path, mode)
+        if 'r' in mode:
+            return os.fdopen(os.dup(sys.stdin.fileno()), 'r')
+        else:
+            return os.fdopen(os.dup(sys.stdout.fileno()), 'w')
 
     # find sizes
     if not args.get('use', None):
@@ -271,9 +271,14 @@ def main(**args):
         if not args.get('diff'):
             print_entry('TOTAL', total)
         else:
-            ratio = (0.0 if not prev_total and not total
-                else 1.0 if not prev_total
-                else (total-prev_total)/prev_total)
+            ratio = (
+                0.0
+                if not prev_total and not total
+                else (total - prev_total) / prev_total
+                if prev_total
+                else 1.0
+            )
+
             print_diff_entry('TOTAL',
                 prev_total, total,
                 total-prev_total,

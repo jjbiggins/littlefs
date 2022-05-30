@@ -154,10 +154,12 @@ def mkdecls(outf, maxwidth=16):
             desc['fail'].strip().format(**format))+'\n')
 
         for op, comp in sorted(COMP.items()):
-            format.update({
-                'comp': comp.lower(), 'COMP': comp.upper(),
+            format |= {
+                'comp': comp.lower(),
+                'COMP': comp.upper(),
                 'op': op,
-            })
+            }
+
             outf.write(re.sub('\s+', ' ',
                 desc['assert'].strip().format(**format))+'\n')
 
@@ -202,14 +204,12 @@ class ParseFailure(Exception):
 
 class Parse:
     def __init__(self, inf, lexemes):
-        p = '|'.join('(?P<%s>%s)' % (n, '|'.join(l))
-            for n, l in lexemes.items())
+        p = '|'.join(f"(?P<{n}>{'|'.join(l)})" for n, l in lexemes.items())
         p = re.compile(p, re.DOTALL)
         data = inf.read()
         tokens = []
         while True:
-            m = p.search(data)
-            if m:
+            if m := p.search(data):
                 if m.start() > 0:
                     tokens.append((None, data[:m.start()]))
                 tokens.append((m.lastgroup, m.group()))

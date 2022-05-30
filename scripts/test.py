@@ -153,18 +153,24 @@ class TestCase:
         self.result = None
 
     def __str__(self):
-        if hasattr(self, 'permno'):
-            if any(k not in self.case.defines for k in self.defines):
-                return '%s#%d#%d (%s)' % (
-                    self.suite.name, self.caseno, self.permno, ', '.join(
-                        '%s=%s' % (k, v) for k, v in self.defines.items()
-                        if k not in self.case.defines))
-            else:
-                return '%s#%d#%d' % (
-                    self.suite.name, self.caseno, self.permno)
-        else:
+        if not hasattr(self, 'permno'):
             return '%s#%d' % (
                 self.suite.name, self.caseno)
+        if any(k not in self.case.defines for k in self.defines):
+            return '%s#%d#%d (%s)' % (
+                self.suite.name,
+                self.caseno,
+                self.permno,
+                ', '.join(
+                    f'{k}={v}'
+                    for k, v in self.defines.items()
+                    if k not in self.case.defines
+                ),
+            )
+
+        else:
+            return '%s#%d#%d' % (
+                self.suite.name, self.caseno, self.permno)
 
     def permute(self, class_=None, defines={}, permno=None, **_):
         ncase = (class_ or type(self))(self.config)
@@ -182,10 +188,20 @@ class TestCase:
             if k not in self.suite.defines:
                 f.write('#define %s %s\n' % (k, v))
 
-        f.write('void test_case%d(%s) {' % (self.caseno, ','.join(
-            '\n'+8*' '+'__attribute__((unused)) intmax_t %s' % k
-            for k in sorted(self.perms[0].defines)
-            if k not in self.defines)))
+        f.write(
+            (
+                'void test_case%d(%s) {'
+                % (
+                    self.caseno,
+                    ','.join(
+                        '\n' + 8 * ' ' + f'__attribute__((unused)) intmax_t {k}'
+                        for k in sorted(self.perms[0].defines)
+                        if k not in self.defines
+                    ),
+                )
+            )
+        )
+
 
         f.write(PROLOGUE)
         f.write('\n')
@@ -220,7 +236,7 @@ class TestCase:
                 for k, v in sorted(self.defines.items(),
                         key=lambda x: len(x[0]), reverse=True):
                     if k in if_:
-                        if_ = if_.replace(k, '(%s)' % v)
+                        if_ = if_.replace(k, f'({v})')
                         break
                 else:
                     break
@@ -235,13 +251,17 @@ class TestCase:
     def test(self, exec=[], persist=False, cycles=None,
             gdb=False, failure=None, disk=None, **args):
         # build command
-        cmd = exec + ['./%s.test' % self.suite.path,
-            repr(self.caseno), repr(self.permno)]
+        cmd = exec + [
+            f'./{self.suite.path}.test',
+            repr(self.caseno),
+            repr(self.permno),
+        ]
+
 
         # persist disk or keep in RAM for speed?
         if persist:
             if not disk:
-                disk = self.suite.path + '.disk'
+                disk = f'{self.suite.path}.disk'
             if persist != 'noerase':
                 try:
                     with open(disk, 'w') as f:
@@ -304,15 +324,11 @@ class TestCase:
                     line)
                 if m and assert_ is None:
                     try:
-                        with open(m.group(1)) as f:
-                            lineno = int(m.group(2))
+                        with open(m[1]) as f:
+                            lineno = int(m[2])
                             line = (next(it.islice(f, lineno-1, None))
                                 .strip('\n'))
-                        assert_ = {
-                            'path': m.group(1),
-                            'line': line,
-                            'lineno': lineno,
-                            'message': m.group(3)}
+                        assert_ = {'path': m[1], 'line': line, 'lineno': lineno, 'message': m[3]}
                     except:
                         pass
         except KeyboardInterrupt:
@@ -336,15 +352,26 @@ class ValgrindTestCase(TestCase):
     def test(self, exec=[], **args):
         verbose = args.get('verbose')
         uninit = (self.defines.get('LFS_ERASE_VALUE', None) == -1)
-        exec = [
-            'valgrind',
-            '--leak-check=full',
-            ] + (['--undef-value-errors=no'] if uninit else []) + [
-            ] + (['--track-origins=yes'] if not uninit else []) + [
-            '--error-exitcode=4',
-            '--error-limit=no',
-            ] + (['--num-callers=1'] if not verbose else []) + [
-            '-q'] + exec
+        exec = (
+            (
+                (
+                    [
+                        'valgrind',
+                        '--leak-check=full',
+                    ]
+                    + (['--undef-value-errors=no'] if uninit else [])
+                    + []
+                    + ([] if uninit else ['--track-origins=yes'])
+                )
+                + [
+                    '--error-exitcode=4',
+                    '--error-limit=no',
+                ]
+            )
+            + ([] if verbose else ['--num-callers=1'])
+            + ['-q']
+        ) + exec
+
         return super().test(exec=exec, **args)
 
 class ReentrantTestCase(TestCase):
@@ -358,11 +385,7 @@ class ReentrantTestCase(TestCase):
     def test(self, persist=False, gdb=False, failure=None, **args):
         for cycles in it.count(1):
             # clear disk first?
-            if cycles == 1 and persist != 'noerase':
-                persist = 'erase'
-            else:
-                persist = 'noerase'
-
+            persist = 'erase' if cycles == 1 and persist != 'noerase' else 'noerase'
             # exact cycle we should drop into debugger?
             if gdb and failure and failure.cycleno == cycles:
                 return super().test(gdb=gdb, persist=persist, cycles=cycles,
@@ -376,9 +399,8 @@ class ReentrantTestCase(TestCase):
             except TestFailure as nfailure:
                 if nfailure.returncode == 33:
                     continue
-                else:
-                    nfailure.cycleno = cycles
-                    raise
+                nfailure.cycleno = cycles
+                raise
 
 class TestSuite:
     def __init__(self, path, classes=[TestCase], defines={},
@@ -428,7 +450,7 @@ class TestSuite:
                 case['code_lineno'] = code_linenos.pop()
             # merge conditions if necessary
             if 'if' in config and 'if' in case:
-                case['if'] = '(%s) && (%s)' % (config['if'], case['if'])
+                case['if'] = f"({config['if']}) && ({case['if']})"
             elif 'if' in config:
                 case['if'] = config['if']
             # initialize test case
@@ -481,11 +503,12 @@ class TestSuite:
                     expanded.append(perm)
 
             # generate permutations
-            case.perms = []
-            for i, (class_, defines) in enumerate(
-                    it.product(self.classes, expanded)):
-                case.perms.append(case.permute(
-                    class_, defines, permno=i+1, **args))
+            case.perms = [
+                case.permute(class_, defines, permno=i + 1, **args)
+                for i, (class_, defines) in enumerate(
+                    it.product(self.classes, expanded)
+                )
+            ]
 
             # also track non-unique defines
             case.defines = {}
@@ -507,7 +530,7 @@ class TestSuite:
 
     def build(self, **args):
         # build test files
-        tf = open(self.path + '.test.tc', 'w')
+        tf = open(f'{self.path}.test.tc', 'w')
         tf.write(GLOBALS)
         if self.code is not None:
             tf.write('#line %d "%s"\n' % (self.code_lineno, self.path))
@@ -516,8 +539,14 @@ class TestSuite:
         tfs = {None: tf}
         for case in self.cases:
             if case.in_ not in tfs:
-                tfs[case.in_] = open(self.path+'.'+
-                    re.sub('(\.c)?$', '.tc', case.in_.replace('/', '.')), 'w')
+                tfs[case.in_] = open(
+                    (
+                        f'{self.path}.'
+                        + re.sub('(\.c)?$', '.tc', case.in_.replace('/', '.'))
+                    ),
+                    'w',
+                )
+
                 tfs[case.in_].write('#line 1 "%s"\n' % case.in_)
                 with open(case.in_) as f:
                     for line in f:
@@ -538,10 +567,23 @@ class TestSuite:
         tf.write(4*' '+'lfs_testbd_cycles = (argc > 4) ? atoi(argv[4]) : 0;\n')
         for perm in self.perms:
             # test declaration
-            tf.write(4*' '+'extern void test_case%d(%s);\n' % (
-                perm.caseno, ', '.join(
-                    'intmax_t %s' % k for k in sorted(perm.defines)
-                    if k not in perm.case.defines)))
+            tf.write(
+                (
+                    4 * ' '
+                    + (
+                        'extern void test_case%d(%s);\n'
+                        % (
+                            perm.caseno,
+                            ', '.join(
+                                f'intmax_t {k}'
+                                for k in sorted(perm.defines)
+                                if k not in perm.case.defines
+                            ),
+                        )
+                    )
+                )
+            )
+
             # test call
             tf.write(4*' '+
                 'if (argc < 3 || (case_ == %d && perm == %d)) {'
@@ -555,7 +597,7 @@ class TestSuite:
             tf.close()
 
         # write makefiles
-        with open(self.path + '.mk', 'w') as mk:
+        with open(f'{self.path}.mk', 'w') as mk:
             mk.write(RULES.replace(4*' ', '\t') % dict(path=self.path))
             mk.write('\n')
 
@@ -572,27 +614,45 @@ class TestSuite:
 
             for path in tfs:
                 if path is None:
-                    mk.write('%s: %s | %s\n' % (
-                        self.path+'.test.c',
-                        self.toml,
-                        self.path+'.test.tc'))
+                    mk.write(
+                        (
+                            '%s: %s | %s\n'
+                            % (
+                                f'{self.path}.test.c',
+                                self.toml,
+                                f'{self.path}.test.tc',
+                            )
+                        )
+                    )
+
                 else:
-                    mk.write('%s: %s %s | %s\n' % (
-                        self.path+'.'+path.replace('/', '.'),
-                        self.toml,
-                        path,
-                        self.path+'.'+re.sub('(\.c)?$', '.tc',
-                            path.replace('/', '.'))))
+                    mk.write(
+                        (
+                            '%s: %s %s | %s\n'
+                            % (
+                                f'{self.path}.' + path.replace('/', '.'),
+                                self.toml,
+                                path,
+                                (
+                                    f'{self.path}.'
+                                    + re.sub(
+                                        '(\.c)?$', '.tc', path.replace('/', '.')
+                                    )
+                                ),
+                            )
+                        )
+                    )
+
                 mk.write('\t./scripts/explode_asserts.py $| -o $@\n')
 
-        self.makefile = self.path + '.mk'
-        self.target = self.path + '.test'
+        self.makefile = f'{self.path}.mk'
+        self.target = f'{self.path}.test'
         return self.makefile, self.target
 
     def test(self, **args):
         # run test suite!
         if not args.get('verbose', True):
-            sys.stdout.write(self.name + ' ')
+            sys.stdout.write(f'{self.name} ')
             sys.stdout.flush()
         for perm in self.perms:
             if not perm.shouldtest(**args):
